@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Runs only on first init of the PGDATA directory.
+
+psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER}" --dbname "${POSTGRES_DB}" <<-EOSQL
+  -- Basic hardening (demo-grade)
+  REVOKE ALL ON DATABASE "${POSTGRES_DB}" FROM PUBLIC;
+
+  DO \$\$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_DB_USER}') THEN
+      CREATE ROLE "${APP_DB_USER}" LOGIN PASSWORD '${APP_DB_PASSWORD}';
+    END IF;
+  END
+  \$\$;
+
+  GRANT CONNECT ON DATABASE "${POSTGRES_DB}" TO "${APP_DB_USER}";
+
+  -- Prepare schema early so default privileges can be applied before migrations create objects
+  CREATE EXTENSION IF NOT EXISTS pgcrypto;
+  CREATE SCHEMA IF NOT EXISTS metrology AUTHORIZATION "${POSTGRES_USER}";
+  REVOKE ALL ON SCHEMA metrology FROM PUBLIC;
+  GRANT USAGE ON SCHEMA metrology TO "${APP_DB_USER}";
+
+  -- Existing objects (if any)
+  GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA metrology TO "${APP_DB_USER}";
+  GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA metrology TO "${APP_DB_USER}";
+  GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA metrology TO "${APP_DB_USER}";
+
+  -- Future objects created by owner in metrology schema
+  ALTER DEFAULT PRIVILEGES FOR ROLE "${POSTGRES_USER}" IN SCHEMA metrology
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${APP_DB_USER}";
+  ALTER DEFAULT PRIVILEGES FOR ROLE "${POSTGRES_USER}" IN SCHEMA metrology
+    GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO "${APP_DB_USER}";
+  ALTER DEFAULT PRIVILEGES FOR ROLE "${POSTGRES_USER}" IN SCHEMA metrology
+    GRANT EXECUTE ON FUNCTIONS TO "${APP_DB_USER}";
+  ALTER DEFAULT PRIVILEGES FOR ROLE "${POSTGRES_USER}" IN SCHEMA metrology
+    GRANT EXECUTE ON PROCEDURES TO "${APP_DB_USER}";
+EOSQL
+
+
